@@ -284,13 +284,56 @@ public:
     }
 };
 
+class Stripes : public Material
+{
+    vec3 color1, color2;
+    float scale;
+    vec3 ks;
+    float shininess;
+public:
+    Stripes(vec3 color1, vec3 color2, float scale):
+    Material(vec3(1, 1, 1)), color1(color1), color2(color2), scale(scale){
+        ks = vec3(1, 1, 1);
+        shininess = 100;
+    }
+    
+    virtual vec3 getColor(
+                          vec3 position,
+                          vec3 normal,
+                          vec3 viewDir)
+    {
+        //return normal;
+        float fract = atan2(position.z, position.x) * scale - floor(atan2(position.z, position.x) * scale);
+        if (fract < 0.5)
+            return color1 * normal.dot(viewDir);
+        else
+            return color2 * normal.dot(viewDir);
+    }
+    
+    virtual vec3 shade(
+                       vec3 position,
+                       vec3 normal,
+                       vec3 viewDir,
+                       vec3 lightDir,
+                       vec3 powerDensity)
+    {
+        float fract = atan2(position.z, position.x) * scale - floor(atan2(position.z, position.x) * scale);
+        vec3 halfWay = (viewDir + lightDir).normalize();
+        
+        if (fract < 0.5)
+            return powerDensity * color1 * normal.dot(viewDir) * fmax(0, normal.dot(lightDir))
+            + powerDensity * ks * pow(fmax(0, normal.dot(halfWay)), shininess);
+        else
+            return powerDensity * color2 * normal.dot(viewDir) * fmax(0, normal.dot(lightDir))
+            + powerDensity * ks * pow(fmax(0, normal.dot(halfWay)), shininess);
+    }
+};
+
 class Metal: public Material
 {
-    float reflectance;
+    float reflectance = 0.4;
 public:
-    Metal(): Material(vec3(0.08, 0.37, 0.37)) {
-        reflectance = 0.4;
-    }
+    Metal(): Material(vec3(0.08, 0.37, 0.37)) {}
 
     vec3 reflectionDir(vec3 normal, vec3 viewDir) {
         return (normal * normal.dot(viewDir) * 2 - viewDir).normalize();
@@ -323,25 +366,38 @@ public:
 class Glass: public Material
 {
     float mu;
-    float refractance;
+    float reflectance_0;
+    float reflectance;
 public:
-    Glass(): Material(vec3(1, 1, 1)) {
-        mu = 0.4;
-        refractance = 0.4;
+    Glass(float mu): Material(vec3(1, 0.5, 0.5)), mu(mu) {
+        reflectance_0 = pow((mu-1),2)/pow((mu+1), 2);
+    }
+    
+    vec3 reflectionDir(vec3 normal, vec3 viewDir) {
+        return (normal * normal.dot(viewDir) * 2 - viewDir).normalize();
+    }
+    
+    float getReflectance(vec3 normal, vec3 viewDir) {
+        float cosa = normal.dot(viewDir);
+        if (cosa < 0) { cosa = -cosa; }
+        if (cosa > 1) { cosa = 1; }
+        reflectance = reflectance_0 + (1-reflectance_0) * pow(1-cosa, 5);
+        return reflectance;
     }
     
     vec3 refractionDir(vec3 normal, vec3 viewDir) {
-        float cosalpha = normal.dot(viewDir);
-        float sinalpha = sqrt(1-pow(cosalpha, 2));
-        float sinbeta = sinalpha/mu;
-        float cosbeta = sqrt(1-pow(sinbeta, 2));
-        vec3 x = -normal * cosbeta;
-        vec3 y = (normal * (normal.dot(viewDir)) - viewDir) * sinbeta;
-        return (x + y).normalize();
-    }
+        
+        vec3 inDir = -viewDir;
+        vec3 perp = -viewDir * normal.dot(inDir);
+        vec3 parallel = inDir - perp;
+        
+        float ri = mu;
+        float cosa = -normal.dot(inDir);
+        if (cosa < 0) { cosa = -cosa; normal = -normal; ri = 1/ri; }
+        float disc = 1 - (1 - cosa * cosa) / ri / ri;
+        float cosb = (disc < 0) ? 0:sqrt(disc);
+        return (parallel * (1 / ri) - normal * cosb).normalize();
     
-    float getRefractance() {
-        return refractance;
     }
 };
 
@@ -856,15 +912,18 @@ public:
         lights.push_back(new PointLightSource(vec3(0, 2, -1)));
         //lights.push_back(new PointLightSource(vec3(1, 1, 2)));
         
-        materials.push_back(new Material(vec3(1, 0.5, 0.5)));//pink
-        materials.push_back(new Material(vec3(0.66, 0.59, 0.39)));//yellow
-        materials.push_back(new Material(vec3(0, 0.30, 0.42), vec3(0, 0, 0), vec3(1, 1, 1), 100)); //blue
-        materials.push_back(new Material(vec3(1, 1, 1)));
-        materials.push_back(new Marble(vec3(1, 1, 1), vec3(1, 0.5, 0), 2));
-        materials.push_back(new Wood());
-        materials.push_back(new Waves());
-        materials.push_back(new Material(vec3(0.08, 0.37, 0.37)));//green
-        materials.push_back(new Metal());
+        materials.push_back(new Material(vec3(1, 0.5, 0.5)));//pink 0
+        materials.push_back(new Material(vec3(0.66, 0.59, 0.39)));//yellow 1
+        materials.push_back(new Material(vec3(0, 0.30, 0.42), vec3(0, 0, 0), vec3(1, 1, 1), 100)); //blue 2
+        materials.push_back(new Material(vec3(1, 1, 1))); // 3
+        materials.push_back(new Marble(vec3(1, 1, 1), vec3(1, 0.5, 0), 2)); // 4
+        materials.push_back(new Wood()); // 5
+        materials.push_back(new Waves()); // 6
+        materials.push_back(new Material(vec3(0.08, 0.37, 0.37)));//green 7
+        materials.push_back(new Metal()); // 8
+        materials.push_back(new Glass(1.33)); // 9
+        materials.push_back(new Stripes(vec3(1,1,1), vec3(1, 0.07, 0.02), 15)); // 10
+        materials.push_back(new Glass(0.99)); // 11
         
         float forward = 0.2;
         float left = 1.1;
@@ -901,9 +960,10 @@ public:
               * mat4x4::translation(vec3(-2, -0.4, 0.9))));
         
         //ball
-        objects.push_back((new Quadric(materials[4]))->transform(
-                mat4x4::scaling(vec3(0.2, 0.2, 0.2))
-              * mat4x4::translation(vec3(-0.5, -0.3, 1.2))));
+        objects.push_back((new Quadric(materials[10]))->transform(
+                mat4x4::scaling(vec3(0.15, 0.2, 0.15))
+              * mat4x4::rotation(vec3(0,0,1), 90*(M_PI/180))
+              * mat4x4::translation(vec3(-1.2, -0.1, 0.7))));
         
         //box
         objects.push_back((new ClippedQuadric(materials[5]))->slab1(0.4)->transform(
@@ -934,10 +994,14 @@ public:
           * mat4x4::translation(vec3(-1.7,2.4,0.5))));
         
         
-        objects.push_back((new Quadric(materials[2]))->transform(
+        objects.push_back((new Quadric(materials[9]))->transform(
                 mat4x4::scaling(vec3(0.2, 0.2, 0.2))
-              * mat4x4::translation(vec3(0.4, 0.3, 1))));
-    
+              * mat4x4::translation(vec3(0.4, -0.1, 1))));
+
+        objects.push_back(new Sphere(vec3(0, 1.2, 0), 0.3, materials[9]));
+        objects.push_back(new Sphere(vec3(0.2, 0.5, 0), 0.2, materials[9]));
+        objects.push_back(new Sphere(vec3(-0.4, 0.3, 1), 0.2, materials[9]));
+        objects.push_back(new Sphere(vec3(-0.85, 0.2, 1.6), 0.4, materials[11]));
     }
     ~Scene()
     {
@@ -959,7 +1023,7 @@ public:
     Hit firstIntersect(const Ray& ray)
     {
         Hit firstHit;
-        float tmin = 1000000.0;
+        float tmin = 10000000.0;
         for (int i = 0; i < objects.size(); i++) {
             Hit hit = objects[i]->intersect(ray);
             if (hit.t > 0 && hit.t < tmin) {
@@ -1001,13 +1065,23 @@ public:
             }
         }
         if(glass) {
+            
+            float correction;
+            if (hit.normal.dot(-ray.dir) < 0) correction = -1;
+            else correction = 1;
+            
             vec3 refractionDir = glass->refractionDir(hit.normal, -ray.dir);
-            Ray refractedRay(hit.position + hit.normal * epsilon, refractionDir);
+            Ray refractedRay(hit.position - hit.normal * correction * epsilon, refractionDir);
+            
+            vec3 reflectionDir = glass->reflectionDir(hit.normal, -ray.dir);
+            Ray reflectedRay(hit.position + hit.normal * epsilon, reflectionDir);
+            
+            
             if (depth > 0) {
-                color += trace(refractedRay, depth - 1) * glass->getRefractance();
+                color += trace(reflectedRay, depth - 1) * glass->getReflectance(hit.normal, -ray.dir);
+                color += trace(refractedRay, depth - 1) * (1 - glass->getReflectance(hit.normal, -ray.dir));
             }
         }
-        
         
         return color; //hit.material->getColor(hit.position, hit.normal, -ray.dir);
     }
